@@ -47,7 +47,12 @@
   .person input::placeholder{color:rgba(255,255,255,.7)}
   .hint{font-size:12px;color:var(--sub)}
   .hint-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px}
-  #linkBtn{border:0;background:var(--off);color:var(--ink);font:inherit;font-size:12px;font-weight:700;padding:5px 9px;border-radius:8px;cursor:pointer;white-space:nowrap}
+  .btns{display:flex;gap:5px;flex-shrink:0}
+  #manageBtn.on{background:var(--red);color:#fff}
+  .person .del{border:0;background:var(--red);color:#fff;border-radius:999px;width:20px;height:20px;font-size:11px;font-weight:900;cursor:pointer;padding:0;margin-left:2px}
+  .hint .reset{border:0;background:var(--red);color:#fff;font:inherit;font-size:11px;font-weight:700;padding:3px 8px;border-radius:7px;cursor:pointer}
+  .person.managing{border-color:var(--red)}
+  #manageBtn,#linkBtn{border:0;background:var(--off);color:var(--ink);font:inherit;font-size:12px;font-weight:700;padding:5px 9px;border-radius:8px;cursor:pointer;white-space:nowrap}
   .links{display:none;margin-top:8px;border-top:1px solid var(--line);padding-top:8px;flex-direction:column;gap:5px}
   .links.show{display:flex}
   .links .lk{display:flex;align-items:center;gap:6px;font-size:12px}
@@ -121,7 +126,7 @@
 
   <div class="card ppl">
     <div class="people" id="people"></div>
-    <div class="hint-row"><div class="hint" id="hint"></div><button id="linkBtn">🔗 링크 복사</button></div>
+    <div class="hint-row"><div class="hint" id="hint"></div><div class="btns"><button id="manageBtn">🗑 삭제</button><button id="linkBtn">🔗 링크 복사</button></div></div>
   </div>
 
   <div class="card">
@@ -144,7 +149,7 @@
 /* ================== 설정: 여기에 Firebase Realtime Database 주소를 붙여넣으세요 ==================
    예) const DB_URL = "https://yaksok-abc12-default-rtdb.asia-southeast1.firebasedatabase.app";
    비워두면 이 기기에서만 저장되는 '혼자 모드'로 동작합니다. */
-const DB_URL = "https://yaksok-45414-default-rtdb.asia-southeast1.firebasedatabase.app/";
+const DB_URL = "https://yaksok-45414-default-rtdb.asia-southeast1.firebasedatabase.app";
 /* ============================================================================================ */
 
 // 같은 사이트로 여러 약속을 따로 쓰고 싶으면 주소 끝에 #모임이름 을 붙이세요 (예: .../#신년회)
@@ -221,12 +226,39 @@ function chip(id,cls){
   el.append(dot,nm);
   return el;
 }
+let managing=false;
+$("manageBtn").onclick=()=>{ managing=!managing; render(); };
+function removePerson(id){
+  const name=nameOf(id)+(id===ME?" (나)":"");
+  if(!window.confirm(`${name}을(를) 삭제할까요?\n입력한 안 되는 날도 모두 지워져요.`)) return;
+  if(pending[id]){ clearTimeout(pending[id]); delete pending[id]; }
+  delete people[id];
+  if(!order().length) managing=false;
+  render();
+  if(online) fetch(`${BASE}/people/${id}.json`,{method:"DELETE"})
+    .then(r=>{ if(!r.ok) throw 0; showStatus("🗑 삭제됨"); })
+    .catch(()=>showStatus("삭제 실패: 인터넷 연결이나 Firebase 규칙을 확인해주세요",true));
+  else saveLocal();
+}
+function resetAll(){
+  if(!window.confirm(`참여자 ${order().length}명과 입력한 날짜를 모두 지울까요?\n되돌릴 수 없어요.`)) return;
+  Object.keys(pending).forEach(k=>{ clearTimeout(pending[k]); delete pending[k]; });
+  people={}; managing=false; render();
+  if(online) fetch(`${BASE}/people.json`,{method:"DELETE"})
+    .then(r=>{ if(!r.ok) throw 0; showStatus("🧹 전체 초기화됐어요"); })
+    .catch(()=>showStatus("초기화 실패: 인터넷 연결이나 Firebase 규칙을 확인해주세요",true));
+  else saveLocal();
+}
 function renderPeople(){
   if(editing) return;
   const box=$("people"); box.innerHTML="";
   order().forEach(id=>{
-    const el=chip(id,id===ME?" me":"");
-    if(id===ME){
+    const el=chip(id,(id===ME?" me":"")+(managing?" managing":""));
+    if(managing){
+      const del=document.createElement("button"); del.className="del"; del.textContent="✕"; del.title="삭제";
+      del.onclick=e=>{ e.stopPropagation(); removePerson(id); };
+      el.appendChild(del);
+    } else if(id===ME){
       const ed=document.createElement("button"); ed.className="edit"; ed.textContent="✏️"; ed.title="이름 바꾸기";
       ed.onclick=e=>{ e.stopPropagation(); startEdit(el); };
       el.appendChild(ed);
@@ -234,6 +266,14 @@ function renderPeople(){
     box.appendChild(el);
   });
   if(!isJoined()) box.appendChild(chip(ME," ghost"));
+  $("manageBtn").textContent=managing?"완료":"🗑 삭제";
+  $("manageBtn").classList.toggle("on",managing);
+  $("manageBtn").style.display=(order().length||managing)?"":"none";
+  if(managing){
+    $("hint").innerHTML=order().length?"<b>✕</b> 한 명씩 삭제 · ":"참여자가 없어요";
+    if(order().length){ const r=document.createElement("button"); r.className="reset"; r.textContent="전체 초기화"; r.onclick=resetAll; $("hint").appendChild(r); }
+    return;
+  }
   $("hint").innerHTML=isJoined()
     ? `나는 <b style="color:${colorOf(ME)}">${esc(nameOf(ME))}</b> · 안 되는 날을 눌러 ✕ · ✏️ 이름`
     : `들어온 순서대로 번호가 자동 배정돼요 · <b>안 되는 날</b>을 누르면 참여!`;
